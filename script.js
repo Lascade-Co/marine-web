@@ -239,6 +239,19 @@ function updateSource() {
   }
 }
 
+function calculateRadius(center, bounds) {
+  const R = 6371; // earth radius in km
+  const lat1 = center.lat * Math.PI / 180;
+  const lon1 = center.lng * Math.PI / 180;
+  const lat2 = bounds.getNorthEast().lat * Math.PI / 180;
+  const lon2 = bounds.getNorthEast().lng * Math.PI / 180;
+  const dLat = lat2 - lat1;
+  const dLon = lon2 - lon1;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return Math.round(R * c);
+}
+
 function shipsInViewport() {
   const bounds = map.getBounds();
   let count = 0;
@@ -260,17 +273,15 @@ function scheduleFetch() {
 async function fetchShipsInView(fetchId) {
   const center = map.getCenter();
   const bounds = map.getBounds();
-  const radius = Math.max(
-    bounds.getEast() - bounds.getWest(),
-    bounds.getNorth() - bounds.getSouth()
-  ) / 2;
-  let url = `https://staging.ship.lascade.com/ships/within_radius/?latitude=${center.lat}&longitude=${center.lng}&radius=${radius}`;
-  let first = true;
-  while (url && fetchId === currentFetchId && (first || shipsInViewport() < 200)) {
-    first = false;
-    const res = await fetch(url);
-    if (!res.ok) break;
+  const radius = calculateRadius(center, bounds);
+  let next = `https://staging.ship.lascade.com/ships/within_radius/?latitude=${center.lat}&longitude=${center.lng}&radius=${radius}`;
+
+  const loadPage = async () => {
+    if (!next || fetchId !== currentFetchId) return;
+    const res = await fetch(next);
+    if (!res.ok) return;
     const data = await res.json();
+    next = data.next;
     for (const ship of data.results) {
       if (!ship.location ||
           !Array.isArray(ship.location.coordinates) ||
@@ -281,6 +292,10 @@ async function fetchShipsInView(fetchId) {
       saveShip(ship);
     }
     updateSource();
-    url = data.next;
-  }
+    if (next && shipsInViewport() < 200 && fetchId === currentFetchId) {
+      setTimeout(loadPage, 500);
+    }
+  };
+
+  loadPage();
 }
