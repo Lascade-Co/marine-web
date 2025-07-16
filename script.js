@@ -292,7 +292,7 @@ async function fetchShipsInView(fetchId) {
       saveShip(ship);
     }
     updateSource();
-    if (next && shipsInViewport() < 200 && fetchId === currentFetchId) {
+    if (next && fetchId === currentFetchId) {
       setTimeout(loadPage, 500);
     }
   };
