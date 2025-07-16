@@ -78,14 +78,57 @@ map.on('load', () => {
   });
 
   // Update ships when moving the map
+  loadCachedShips().then(cached => {
+    for (const ship of cached) {
+      shipsCache.set(ship.mmsi, {
+        type: 'Feature',
+        geometry: ship.location,
+        properties: {
+          mmsi: ship.mmsi,
+          name: ship.name,
+          speed: ship.speed,
+          course: ship.course
+        }
+      });
+    }
+    updateSource();
+    updateShips();
+  }).catch(() => updateShips());
   map.on('moveend', updateShips);
-  updateShips();
 });
 
 let fetchTimeout;
 let stableTimeout;
 let currentRequestId = 0;
 const shipsCache = new Map();
+
+// IndexedDB for persistent caching
+const dbPromise = new Promise((resolve, reject) => {
+  const request = indexedDB.open('ships-db', 1);
+  request.onupgradeneeded = (e) => {
+    e.target.result.createObjectStore('ships', { keyPath: 'mmsi' });
+  };
+  request.onsuccess = (e) => resolve(e.target.result);
+  request.onerror = (e) => reject(e.target.error);
+});
+
+async function loadCachedShips() {
+  const db = await dbPromise;
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('ships', 'readonly');
+    const store = tx.objectStore('ships');
+    const req = store.getAll();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function saveShip(ship) {
+  dbPromise.then(db => {
+    const tx = db.transaction('ships', 'readwrite');
+    tx.objectStore('ships').put(ship);
+  });
+}
 
 function updateShips() {
   if (fetchTimeout) clearTimeout(fetchTimeout);
@@ -95,13 +138,6 @@ function updateShips() {
     const center = map.getCenter();
     const bounds = map.getBounds();
     const radius = calculateRadius(center, bounds);
-
-    // Drop cached ships outside of the new radius
-    for (const [mmsi, feat] of Array.from(shipsCache.entries())) {
-      if (distance(center, feat.geometry.coordinates) > radius) {
-        shipsCache.delete(mmsi);
-      }
-    }
 
     try {
       const url = `https://staging.ship.lascade.com/ships/within_radius/?latitude=${center.lat}&longitude=${center.lng}&radius=${radius}`;
@@ -128,6 +164,7 @@ async function fetchPage(url, requestId) {
         course: ship.course
       }
     });
+    saveShip(ship);
   }
   if (requestId === currentRequestId) {
     updateSource();
@@ -158,18 +195,6 @@ function updateSource() {
   });
 }
 
-function distance(center, coords) {
-  const R = 6371;
-  const lat1 = center.lat * Math.PI / 180;
-  const lon1 = center.lng * Math.PI / 180;
-  const lat2 = coords[1] * Math.PI / 180;
-  const lon2 = coords[0] * Math.PI / 180;
-  const dLat = lat2 - lat1;
-  const dLon = lon2 - lon1;
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
-}
 
 function calculateRadius(center, bounds) {
   const R = 6371; // earth radius in km
