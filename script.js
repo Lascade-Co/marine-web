@@ -1,5 +1,5 @@
 // Replace with your Mapbox access token
-mapboxgl.accessToken = 'YOUR_MAPBOX_ACCESS_TOKEN';
+mapboxgl.accessToken = 'pk.eyJ1IjoiYXBwcy1sYXNjYWRlIiwiYSI6ImNsbGtwaWpqaTI4ZHUza3FoMDdhZWtiNWkifQ.pSE_wiDz_j67iJKIPAkrtA';
 
 // Query parameters
 const params = new URLSearchParams(window.location.search);
