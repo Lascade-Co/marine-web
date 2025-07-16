@@ -14,6 +14,7 @@ const map = new mapboxgl.Map({
 });
 
 const shipsCache = new Map();
+let currentFetchId = 0;
 
 const toggleBtn = document.getElementById('cluster-toggle');
 if (toggleBtn) {
@@ -76,7 +77,12 @@ map.on('load', () => {
   });
 
   if (disableClustering) {
-    map.on('moveend', updateSource);
+    map.on('moveend', () => {
+      updateSource();
+      scheduleFetch();
+    });
+  } else {
+    map.on('moveend', scheduleFetch);
   }
 
   map.on('click', 'unclustered-point', (e) => {
@@ -137,6 +143,7 @@ async function loadShips() {
       }
     }
     updateSource();
+    scheduleFetch();
   } catch (err) {
     console.error('Failed to load ships', err);
   }
@@ -230,4 +237,65 @@ function updateSource() {
       features
     });
   }
+}
+
+function calculateRadius(center, bounds) {
+  const R = 6371; // earth radius in km
+  const lat1 = center.lat * Math.PI / 180;
+  const lon1 = center.lng * Math.PI / 180;
+  const lat2 = bounds.getNorthEast().lat * Math.PI / 180;
+  const lon2 = bounds.getNorthEast().lng * Math.PI / 180;
+  const dLat = lat2 - lat1;
+  const dLon = lon2 - lon1;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return Math.round(R * c);
+}
+
+function shipsInViewport() {
+  const bounds = map.getBounds();
+  let count = 0;
+  for (const f of shipsCache.values()) {
+    const [lon, lat] = f.geometry.coordinates;
+    if (lon >= bounds.getWest() && lon <= bounds.getEast() &&
+        lat >= bounds.getSouth() && lat <= bounds.getNorth()) {
+      count++;
+    }
+  }
+  return count;
+}
+
+function scheduleFetch() {
+  const fetchId = ++currentFetchId;
+  setTimeout(() => fetchShipsInView(fetchId), 300);
+}
+
+async function fetchShipsInView(fetchId) {
+  const center = map.getCenter();
+  const bounds = map.getBounds();
+  const radius = calculateRadius(center, bounds);
+  let next = `https://staging.ship.lascade.com/ships/within_radius/?latitude=${center.lat}&longitude=${center.lng}&radius=${radius}`;
+
+  const loadPage = async () => {
+    if (!next || fetchId !== currentFetchId) return;
+    const res = await fetch(next);
+    if (!res.ok) return;
+    const data = await res.json();
+    next = data.next;
+    for (const ship of data.results) {
+      if (!ship.location ||
+          !Array.isArray(ship.location.coordinates) ||
+          ship.location.coordinates.length !== 2) {
+        continue;
+      }
+      shipsCache.set(ship.mmsi, toFeature(ship));
+      saveShip(ship);
+    }
+    updateSource();
+    if (next && fetchId === currentFetchId) {
+      setTimeout(loadPage, 500);
+    }
+  };
+
+  loadPage();
 }
