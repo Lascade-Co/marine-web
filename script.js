@@ -13,7 +13,8 @@ const map = new mapboxgl.Map({
   zoom: 2
 });
 
-// Source setup with optional clustering
+const shipsCache = new Map();
+
 map.on('load', () => {
   map.addSource('ships', {
     type: 'geojson',
@@ -23,7 +24,6 @@ map.on('load', () => {
     clusterMaxZoom: 10
   });
 
-  // Clustered layers if enabled
   if (!disableClustering) {
     map.addLayer({
       id: 'clusters',
@@ -49,7 +49,6 @@ map.on('load', () => {
     });
   }
 
-  // Individual ship points
   map.addLayer({
     id: 'unclustered-point',
     type: 'circle',
@@ -61,63 +60,20 @@ map.on('load', () => {
     }
   });
 
-  // Popups on click
   map.on('click', 'unclustered-point', (e) => {
     const props = e.features[0].properties;
     const coordinates = e.features[0].geometry.coordinates.slice();
     const info = `MMSI: ${props.mmsi}<br>Name: ${props.name || 'N/A'}<br>Speed: ${props.speed || 'N/A'}`;
-
     new mapboxgl.Popup()
       .setLngLat(coordinates)
       .setHTML(info)
       .addTo(map);
   });
 
-  // Zoom into clusters
-  if (!disableClustering) {
-    map.on('click', 'clusters', (e) => {
-      const features = map.queryRenderedFeatures(e.point, { layers: ['clusters'] });
-      const clusterId = features[0].properties.cluster_id;
-      map.getSource('ships').getClusterExpansionZoom(clusterId, (err, zoom) => {
-        if (err) return;
-        map.easeTo({ center: features[0].geometry.coordinates, zoom });
-      });
-    });
-  }
-
-  // Load cached ships or fetch all on first visit
-  loadCachedShips().then(async cached => {
-    for (const ship of cached) {
-      shipsCache.set(ship.mmsi, {
-        type: 'Feature',
-        geometry: ship.location,
-        properties: {
-          mmsi: ship.mmsi,
-          name: ship.name,
-          speed: ship.speed,
-          course: ship.course
-        }
-      });
-    }
-    if (forceFetchAll || cached.length === 0) {
-      await fetchAllShips();
-    }
-    updateSource();
-    updateShips();
-  }).catch(async () => {
-    await fetchAllShips();
-    updateSource();
-    updateShips();
-  });
-  map.on('moveend', updateShips);
+  loadShips();
 });
 
-let fetchTimeout;
-let stableTimeout;
-let currentRequestId = 0;
-const shipsCache = new Map();
-
-// IndexedDB for persistent caching
+// IndexedDB setup
 const dbPromise = new Promise((resolve, reject) => {
   const request = indexedDB.open('ships-db', 1);
   request.onupgradeneeded = (e) => {
@@ -145,106 +101,68 @@ function saveShip(ship) {
   });
 }
 
-function updateShips() {
-  if (fetchTimeout) clearTimeout(fetchTimeout);
-  if (stableTimeout) clearTimeout(stableTimeout);
-  const requestId = ++currentRequestId;
-  fetchTimeout = setTimeout(async () => {
-    const center = map.getCenter();
-    const bounds = map.getBounds();
-    const radius = calculateRadius(center, bounds);
-
-    try {
-      const url = `https://staging.ship.lascade.com/ships/within_radius/?latitude=${center.lat}&longitude=${center.lng}&radius=${radius}`;
-      const next = await fetchPage(url, requestId);
-      schedulePagination(next, requestId);
-    } catch (err) {
-      console.error('Failed to load ships', err);
+async function loadShips() {
+  try {
+    const cached = await loadCachedShips();
+    if (forceFetchAll || cached.length === 0) {
+      await fetchAllShipsFromCSV();
+    } else {
+      for (const ship of cached) {
+        shipsCache.set(ship.mmsi, toFeature(ship));
+      }
     }
-  }, 300);
+    updateSource();
+  } catch (err) {
+    console.error('Failed to load ships', err);
+  }
 }
 
-async function fetchPage(url, requestId) {
+async function fetchAllShipsFromCSV() {
+  const url = 'https://staging.ship.lascade.com/static/ships_data_dump.csv';
   const res = await fetch(url);
   if (!res.ok) throw new Error('Network response was not ok');
-  const data = await res.json();
-  for (const ship of data.results) {
-    shipsCache.set(ship.mmsi, {
-      type: 'Feature',
-      geometry: ship.location,
-      properties: {
-        mmsi: ship.mmsi,
-        name: ship.name,
-        speed: ship.speed,
-        course: ship.course
-      }
-    });
+  const text = await res.text();
+  const lines = text.trim().split('\n');
+  lines.shift(); // header
+  for (const line of lines) {
+    const parts = line.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/).map(s => s.replace(/^"|"$/g, ''));
+    const [mmsi, type_name, type_value, country, location, name, imo_number, course, speed, heading] = parts;
+    const [lon, lat] = location.split(',').map(Number);
+    const ship = {
+      mmsi: Number(mmsi),
+      type: type_name || null,
+      country: country || null,
+      location: { type: 'Point', coordinates: [lon, lat] },
+      name: name || null,
+      imo_number: imo_number ? Number(imo_number) : null,
+      course: parseFloat(course),
+      speed: parseFloat(speed),
+      heading: heading ? parseFloat(heading) : null
+    };
+    shipsCache.set(ship.mmsi, toFeature(ship));
     saveShip(ship);
   }
-  if (requestId === currentRequestId) {
-    updateSource();
-  }
-  return data.next;
 }
 
-function schedulePagination(nextUrl, requestId) {
-  if (!nextUrl) return;
-  stableTimeout = setTimeout(() => {
-    if (requestId === currentRequestId && shipsCache.size < 200) {
-      loadAdditionalPages(nextUrl, requestId);
+function toFeature(ship) {
+  return {
+    type: 'Feature',
+    geometry: ship.location,
+    properties: {
+      mmsi: ship.mmsi,
+      name: ship.name,
+      speed: ship.speed,
+      course: ship.course
     }
-  }, 1500);
-}
-
-async function loadAdditionalPages(url, requestId) {
-  let next = url;
-  while (next && requestId === currentRequestId && shipsCache.size < 200) {
-    next = await fetchPage(next, requestId);
-  }
-}
-
-// Fetch all ships from the API and cache them
-async function fetchAllShips() {
-  let url = 'https://staging.ship.lascade.com/ships/within_radius/';
-  while (url) {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error('Network response was not ok');
-    const data = await res.json();
-    for (const ship of data.results) {
-      shipsCache.set(ship.mmsi, {
-        type: 'Feature',
-        geometry: ship.location,
-        properties: {
-          mmsi: ship.mmsi,
-          name: ship.name,
-          speed: ship.speed,
-          course: ship.course
-        }
-      });
-      saveShip(ship);
-    }
-    updateSource();
-    url = data.next;
-  }
+  };
 }
 
 function updateSource() {
-  map.getSource('ships').setData({
-    type: 'FeatureCollection',
-    features: Array.from(shipsCache.values())
-  });
-}
-
-
-function calculateRadius(center, bounds) {
-  const R = 6371; // earth radius in km
-  const lat1 = center.lat * Math.PI / 180;
-  const lon1 = center.lng * Math.PI / 180;
-  const lat2 = bounds.getNorthEast().lat * Math.PI / 180;
-  const lon2 = bounds.getNorthEast().lng * Math.PI / 180;
-  const dLat = lat2 - lat1;
-  const dLon = lon2 - lon1;
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return Math.round(R * c);
+  const source = map.getSource('ships');
+  if (source) {
+    source.setData({
+      type: 'FeatureCollection',
+      features: Array.from(shipsCache.values())
+    });
+  }
 }

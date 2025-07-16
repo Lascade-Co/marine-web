@@ -1,6 +1,8 @@
 # Marine Web Map
 
-A simple webpage displaying ships on a world map using Mapbox GL JS. Data is fetched from the `/ships/within_radius/` API.
+A simple webpage displaying ships on a world map using Mapbox GL JS. Ship
+positions are loaded from a CSV dump available at
+`https://staging.ship.lascade.com/static/ships_data_dump.csv`.
 
 ## Setup
 
@@ -14,10 +16,9 @@ npx serve .
 
 Then open the displayed local URL in your browser.
 
-As you pan and zoom, ships within the current map view are requested from the API. Click an individual ship marker to see its details in a popup. Markers are clustered for performance.
+All ships are loaded from the CSV file on the first visit and displayed using Mapbox clustering for performance. Click an individual ship marker to see its details in a popup.
 
-Results from each request are cached in the browser so ships remain visible as you move around. Cached ships are kept forever and persisted in IndexedDB so reloading the page does not clear them. If fewer than 200 ships are shown and you stay in one spot for a moment, additional pages of the API are automatically loaded to fill in more ships.
-On the first visit, all ships are requested by calling the API without any location parameters and walking through every page so the cache starts fully populated.
+Ship data is cached in IndexedDB so reloading the page does not require another download. The `fetch_all` query parameter forces the CSV to be downloaded again.
 
 ### Query parameters
 
