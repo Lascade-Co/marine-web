@@ -15,3 +15,5 @@ npx serve .
 Then open the displayed local URL in your browser.
 
 As you pan and zoom, ships within the current map view are requested from the API. Click an individual ship marker to see its details in a popup. Markers are clustered for performance.
+
+Results from each request are cached in the browser so ships remain visible as you move around. If fewer than 200 ships are shown and you stay in one spot for a moment, additional pages of the API are automatically loaded to fill in more ships.
