@@ -124,7 +124,7 @@ async function loadShips() {
   try {
     const cached = await loadCachedShips();
     if (forceFetchAll || cached.length === 0) {
-      await fetchAllShipsFromCSV();
+      await fetchAllShips();
     } else {
       for (const ship of cached) {
         if (!ship.location ||
@@ -169,6 +169,34 @@ async function fetchAllShipsFromCSV() {
     };
     shipsCache.set(ship.mmsi, toFeature(ship));
     saveShip(ship);
+  }
+}
+
+async function fetchAllShipsFromAPI() {
+  let url = 'https://staging.ship.lascade.com/ships/within_radius/';
+  while (url) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('Network response was not ok');
+    const data = await res.json();
+    for (const ship of data.results) {
+      if (!ship.location ||
+          !Array.isArray(ship.location.coordinates) ||
+          ship.location.coordinates.length !== 2) {
+        continue;
+      }
+      shipsCache.set(ship.mmsi, toFeature(ship));
+      saveShip(ship);
+    }
+    url = data.next;
+  }
+}
+
+async function fetchAllShips() {
+  try {
+    await fetchAllShipsFromCSV();
+  } catch (err) {
+    console.warn('CSV download failed, falling back to API', err);
+    await fetchAllShipsFromAPI();
   }
 }
 
