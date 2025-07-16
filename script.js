@@ -14,6 +14,7 @@ const map = new mapboxgl.Map({
 });
 
 const shipsCache = new Map();
+let currentFetchId = 0;
 
 const toggleBtn = document.getElementById('cluster-toggle');
 if (toggleBtn) {
@@ -76,7 +77,12 @@ map.on('load', () => {
   });
 
   if (disableClustering) {
-    map.on('moveend', updateSource);
+    map.on('moveend', () => {
+      updateSource();
+      scheduleFetch();
+    });
+  } else {
+    map.on('moveend', scheduleFetch);
   }
 
   map.on('click', 'unclustered-point', (e) => {
@@ -137,6 +143,7 @@ async function loadShips() {
       }
     }
     updateSource();
+    scheduleFetch();
   } catch (err) {
     console.error('Failed to load ships', err);
   }
@@ -229,5 +236,51 @@ function updateSource() {
       type: 'FeatureCollection',
       features
     });
+  }
+}
+
+function shipsInViewport() {
+  const bounds = map.getBounds();
+  let count = 0;
+  for (const f of shipsCache.values()) {
+    const [lon, lat] = f.geometry.coordinates;
+    if (lon >= bounds.getWest() && lon <= bounds.getEast() &&
+        lat >= bounds.getSouth() && lat <= bounds.getNorth()) {
+      count++;
+    }
+  }
+  return count;
+}
+
+function scheduleFetch() {
+  const fetchId = ++currentFetchId;
+  setTimeout(() => fetchShipsInView(fetchId), 300);
+}
+
+async function fetchShipsInView(fetchId) {
+  const center = map.getCenter();
+  const bounds = map.getBounds();
+  const radius = Math.max(
+    bounds.getEast() - bounds.getWest(),
+    bounds.getNorth() - bounds.getSouth()
+  ) / 2;
+  let url = `https://staging.ship.lascade.com/ships/within_radius/?latitude=${center.lat}&longitude=${center.lng}&radius=${radius}`;
+  let first = true;
+  while (url && fetchId === currentFetchId && (first || shipsInViewport() < 200)) {
+    first = false;
+    const res = await fetch(url);
+    if (!res.ok) break;
+    const data = await res.json();
+    for (const ship of data.results) {
+      if (!ship.location ||
+          !Array.isArray(ship.location.coordinates) ||
+          ship.location.coordinates.length !== 2) {
+        continue;
+      }
+      shipsCache.set(ship.mmsi, toFeature(ship));
+      saveShip(ship);
+    }
+    updateSource();
+    url = data.next;
   }
 }
