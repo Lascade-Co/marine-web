@@ -15,6 +15,21 @@ const map = new mapboxgl.Map({
 
 const shipsCache = new Map();
 
+const toggleBtn = document.getElementById('cluster-toggle');
+if (toggleBtn) {
+  toggleBtn.title = disableClustering ? 'Enable clustering' : 'Disable clustering';
+  toggleBtn.textContent = disableClustering ? 'C+' : 'C-';
+  toggleBtn.addEventListener('click', () => {
+    const params = new URLSearchParams(window.location.search);
+    if (disableClustering) {
+      params.delete('no_clustering');
+    } else {
+      params.set('no_clustering', '');
+    }
+    window.location.search = params.toString();
+  });
+}
+
 map.on('load', () => {
   map.addSource('ships', {
     type: 'geojson',
@@ -112,6 +127,12 @@ async function loadShips() {
       await fetchAllShipsFromCSV();
     } else {
       for (const ship of cached) {
+        if (!ship.location ||
+            !Array.isArray(ship.location.coordinates) ||
+            ship.location.coordinates.length !== 2 ||
+            ship.location.coordinates.some(n => Number.isNaN(n))) {
+          continue;
+        }
         shipsCache.set(ship.mmsi, toFeature(ship));
       }
     }
@@ -132,6 +153,9 @@ async function fetchAllShipsFromCSV() {
     const parts = line.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/).map(s => s.replace(/^"|"$/g, ''));
     const [mmsi, type_name, type_value, country, location, name, imo_number, course, speed, heading] = parts;
     const [lon, lat] = location.split(',').map(Number);
+    if (Number.isNaN(lon) || Number.isNaN(lat)) {
+      continue;
+    }
     const ship = {
       mmsi: Number(mmsi),
       type: type_name || null,
