@@ -77,8 +77,8 @@ map.on('load', () => {
     });
   });
 
-  // Update ships when moving the map
-  loadCachedShips().then(cached => {
+  // Load cached ships or fetch all on first visit
+  loadCachedShips().then(async cached => {
     for (const ship of cached) {
       shipsCache.set(ship.mmsi, {
         type: 'Feature',
@@ -91,9 +91,16 @@ map.on('load', () => {
         }
       });
     }
+    if (cached.length === 0) {
+      await fetchAllShips();
+    }
     updateSource();
     updateShips();
-  }).catch(() => updateShips());
+  }).catch(async () => {
+    await fetchAllShips();
+    updateSource();
+    updateShips();
+  });
   map.on('moveend', updateShips);
 });
 
@@ -185,6 +192,31 @@ async function loadAdditionalPages(url, requestId) {
   let next = url;
   while (next && requestId === currentRequestId && shipsCache.size < 200) {
     next = await fetchPage(next, requestId);
+  }
+}
+
+// Fetch all ships from the API and cache them
+async function fetchAllShips() {
+  let url = 'https://staging.ship.lascade.com/ships/within_radius/';
+  while (url) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('Network response was not ok');
+    const data = await res.json();
+    for (const ship of data.results) {
+      shipsCache.set(ship.mmsi, {
+        type: 'Feature',
+        geometry: ship.location,
+        properties: {
+          mmsi: ship.mmsi,
+          name: ship.name,
+          speed: ship.speed,
+          course: ship.course
+        }
+      });
+      saveShip(ship);
+    }
+    updateSource();
+    url = data.next;
   }
 }
 
