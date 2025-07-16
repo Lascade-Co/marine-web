@@ -1,6 +1,11 @@
 // Replace with your Mapbox access token
 mapboxgl.accessToken = 'YOUR_MAPBOX_ACCESS_TOKEN';
 
+// Query parameters
+const params = new URLSearchParams(window.location.search);
+const forceFetchAll = params.has('fetch_all');
+const disableClustering = params.has('no_clustering');
+
 const map = new mapboxgl.Map({
   container: 'map',
   style: 'mapbox://styles/mapbox/streets-v11',
@@ -8,40 +13,41 @@ const map = new mapboxgl.Map({
   zoom: 2
 });
 
-// Source setup with clustering
+// Source setup with optional clustering
 map.on('load', () => {
   map.addSource('ships', {
     type: 'geojson',
     data: { type: 'FeatureCollection', features: [] },
-    cluster: true,
+    cluster: !disableClustering,
     clusterRadius: 40,
     clusterMaxZoom: 10
   });
 
-  // Clustered circles
-  map.addLayer({
-    id: 'clusters',
-    type: 'circle',
-    source: 'ships',
-    filter: ['has', 'point_count'],
-    paint: {
-      'circle-color': '#51bbd6',
-      'circle-radius': ['step', ['get', 'point_count'], 15, 100, 20, 750, 25]
-    }
-  });
+  // Clustered layers if enabled
+  if (!disableClustering) {
+    map.addLayer({
+      id: 'clusters',
+      type: 'circle',
+      source: 'ships',
+      filter: ['has', 'point_count'],
+      paint: {
+        'circle-color': '#51bbd6',
+        'circle-radius': ['step', ['get', 'point_count'], 15, 100, 20, 750, 25]
+      }
+    });
 
-  // Cluster counts
-  map.addLayer({
-    id: 'cluster-count',
-    type: 'symbol',
-    source: 'ships',
-    filter: ['has', 'point_count'],
-    layout: {
-      'text-field': '{point_count_abbreviated}',
-      'text-font': ['DIN Offc Pro Medium', 'Arial Unicode MS Bold'],
-      'text-size': 12
-    }
-  });
+    map.addLayer({
+      id: 'cluster-count',
+      type: 'symbol',
+      source: 'ships',
+      filter: ['has', 'point_count'],
+      layout: {
+        'text-field': '{point_count_abbreviated}',
+        'text-font': ['DIN Offc Pro Medium', 'Arial Unicode MS Bold'],
+        'text-size': 12
+      }
+    });
+  }
 
   // Individual ship points
   map.addLayer({
@@ -68,14 +74,16 @@ map.on('load', () => {
   });
 
   // Zoom into clusters
-  map.on('click', 'clusters', (e) => {
-    const features = map.queryRenderedFeatures(e.point, { layers: ['clusters'] });
-    const clusterId = features[0].properties.cluster_id;
-    map.getSource('ships').getClusterExpansionZoom(clusterId, (err, zoom) => {
-      if (err) return;
-      map.easeTo({ center: features[0].geometry.coordinates, zoom });
+  if (!disableClustering) {
+    map.on('click', 'clusters', (e) => {
+      const features = map.queryRenderedFeatures(e.point, { layers: ['clusters'] });
+      const clusterId = features[0].properties.cluster_id;
+      map.getSource('ships').getClusterExpansionZoom(clusterId, (err, zoom) => {
+        if (err) return;
+        map.easeTo({ center: features[0].geometry.coordinates, zoom });
+      });
     });
-  });
+  }
 
   // Load cached ships or fetch all on first visit
   loadCachedShips().then(async cached => {
@@ -91,7 +99,7 @@ map.on('load', () => {
         }
       });
     }
-    if (cached.length === 0) {
+    if (forceFetchAll || cached.length === 0) {
       await fetchAllShips();
     }
     updateSource();

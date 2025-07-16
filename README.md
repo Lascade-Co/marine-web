@@ -18,3 +18,7 @@ As you pan and zoom, ships within the current map view are requested from the AP
 
 Results from each request are cached in the browser so ships remain visible as you move around. Cached ships are kept forever and persisted in IndexedDB so reloading the page does not clear them. If fewer than 200 ships are shown and you stay in one spot for a moment, additional pages of the API are automatically loaded to fill in more ships.
 On the first visit, all ships are requested by calling the API without any location parameters and walking through every page so the cache starts fully populated.
+
+### Query parameters
+
+You can add `?fetch_all` to the page URL to force a full download of every ship even if data is already cached. Use `no_clustering` to disable marker clustering so every ship is displayed individually.
