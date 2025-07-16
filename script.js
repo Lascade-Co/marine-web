@@ -1,0 +1,130 @@
+// Replace with your Mapbox access token
+mapboxgl.accessToken = 'YOUR_MAPBOX_ACCESS_TOKEN';
+
+const map = new mapboxgl.Map({
+  container: 'map',
+  style: 'mapbox://styles/mapbox/streets-v11',
+  center: [0, 0],
+  zoom: 2
+});
+
+// Source setup with clustering
+map.on('load', () => {
+  map.addSource('ships', {
+    type: 'geojson',
+    data: { type: 'FeatureCollection', features: [] },
+    cluster: true,
+    clusterRadius: 40,
+    clusterMaxZoom: 10
+  });
+
+  // Clustered circles
+  map.addLayer({
+    id: 'clusters',
+    type: 'circle',
+    source: 'ships',
+    filter: ['has', 'point_count'],
+    paint: {
+      'circle-color': '#51bbd6',
+      'circle-radius': ['step', ['get', 'point_count'], 15, 100, 20, 750, 25]
+    }
+  });
+
+  // Cluster counts
+  map.addLayer({
+    id: 'cluster-count',
+    type: 'symbol',
+    source: 'ships',
+    filter: ['has', 'point_count'],
+    layout: {
+      'text-field': '{point_count_abbreviated}',
+      'text-font': ['DIN Offc Pro Medium', 'Arial Unicode MS Bold'],
+      'text-size': 12
+    }
+  });
+
+  // Individual ship points
+  map.addLayer({
+    id: 'unclustered-point',
+    type: 'circle',
+    source: 'ships',
+    filter: ['!', ['has', 'point_count']],
+    paint: {
+      'circle-color': '#f28cb1',
+      'circle-radius': 6
+    }
+  });
+
+  // Popups on click
+  map.on('click', 'unclustered-point', (e) => {
+    const props = e.features[0].properties;
+    const coordinates = e.features[0].geometry.coordinates.slice();
+    const info = `MMSI: ${props.mmsi}<br>Name: ${props.name || 'N/A'}<br>Speed: ${props.speed || 'N/A'}`;
+
+    new mapboxgl.Popup()
+      .setLngLat(coordinates)
+      .setHTML(info)
+      .addTo(map);
+  });
+
+  // Zoom into clusters
+  map.on('click', 'clusters', (e) => {
+    const features = map.queryRenderedFeatures(e.point, { layers: ['clusters'] });
+    const clusterId = features[0].properties.cluster_id;
+    map.getSource('ships').getClusterExpansionZoom(clusterId, (err, zoom) => {
+      if (err) return;
+      map.easeTo({ center: features[0].geometry.coordinates, zoom });
+    });
+  });
+
+  // Update ships when moving the map
+  map.on('moveend', updateShips);
+  updateShips();
+});
+
+let fetchTimeout;
+function updateShips() {
+  if (fetchTimeout) clearTimeout(fetchTimeout);
+  fetchTimeout = setTimeout(async () => {
+    const center = map.getCenter();
+    const bounds = map.getBounds();
+    const radius = calculateRadius(center, bounds);
+
+    try {
+      const url = `https://staging.ship.lascade.com/ships/within_radius/?latitude=${center.lat}&longitude=${center.lng}&radius=${radius}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('Network response was not ok');
+      const data = await res.json();
+      const features = data.results.map((ship) => ({
+        type: 'Feature',
+        geometry: ship.location,
+        properties: {
+          mmsi: ship.mmsi,
+          name: ship.name,
+          speed: ship.speed,
+          course: ship.course
+        }
+      }));
+
+      map.getSource('ships').setData({
+        type: 'FeatureCollection',
+        features
+      });
+    } catch (err) {
+      console.error('Failed to load ships', err);
+    }
+  }, 300);
+}
+
+function calculateRadius(center, bounds) {
+  const R = 6371; // earth radius in km
+  const lat1 = center.lat * Math.PI / 180;
+  const lon1 = center.lng * Math.PI / 180;
+  const lat2 = bounds.getNorthEast().lat * Math.PI / 180;
+  const lon2 = bounds.getNorthEast().lng * Math.PI / 180;
+  const dLat = lat2 - lat1;
+  const dLon = lon2 - lon1;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return Math.round(R * c);
+}
