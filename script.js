@@ -60,6 +60,10 @@ map.on('load', () => {
     }
   });
 
+  if (disableClustering) {
+    map.on('moveend', updateSource);
+  }
+
   map.on('click', 'unclustered-point', (e) => {
     const props = e.features[0].properties;
     const coordinates = e.features[0].geometry.coordinates.slice();
@@ -160,9 +164,18 @@ function toFeature(ship) {
 function updateSource() {
   const source = map.getSource('ships');
   if (source) {
+    let features = Array.from(shipsCache.values());
+    if (disableClustering) {
+      const bounds = map.getBounds();
+      features = features.filter(f => {
+        const [lon, lat] = f.geometry.coordinates;
+        return lon >= bounds.getWest() && lon <= bounds.getEast() &&
+               lat >= bounds.getSouth() && lat <= bounds.getNorth();
+      }).slice(0, 1000);
+    }
     source.setData({
       type: 'FeatureCollection',
-      features: Array.from(shipsCache.values())
+      features
     });
   }
 }

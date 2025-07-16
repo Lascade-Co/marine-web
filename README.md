@@ -22,4 +22,6 @@ Ship data is cached in IndexedDB so reloading the page does not require another 
 
 ### Query parameters
 
-You can add `?fetch_all` to the page URL to force a full download of every ship even if data is already cached. Use `no_clustering` to disable marker clustering so every ship is displayed individually.
+You can add `?fetch_all` to the page URL to force a full download of every ship even if data is already cached.
+Use `no_clustering` to disable marker clustering so every ship is displayed individually.
+When clustering is disabled, the map shows at most 1000 ships in the current viewport for smooth performance.
